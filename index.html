@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#f4f6fa">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="발자국 러너">
+<link rel="manifest" href="manifest.json">
+<title>발자국 러너</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172237;background:#f4f6fa}
+*{box-sizing:border-box}body{margin:0}main{max-width:680px;margin:auto;padding:18px 14px 32px}
+header{display:flex;justify-content:space-between;align-items:center;margin:8px 2px 16px}
+h1{font-size:29px;margin:0;font-weight:900;letter-spacing:-1px}.sub{font-size:10px;letter-spacing:1.7px;color:#8993a3;margin-top:4px}
+.pill{font-size:11px;background:#e5ebf4;border-radius:99px;padding:8px 10px;color:#526075}
+#map{height:42vh;min-height:290px;max-height:470px;border-radius:20px;overflow:hidden;background:#e3eaf3;z-index:1}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0}
+.stat,.panel{background:white;border-radius:16px;padding:14px;box-shadow:0 3px 14px #18294a08}
+.label{font-size:10px;color:#8993a3;letter-spacing:1px;margin-bottom:8px}.value{font-size:19px;font-weight:850;white-space:nowrap}.unit{font-size:10px;color:#687588;font-weight:600}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}
+button{border:0;border-radius:13px;padding:15px 10px;font-size:14px;font-weight:800;background:#e3e9f5;color:#253249;cursor:pointer}
+.primary{background:#2864ff;color:white}.stop{background:#d94747;color:white}.full{width:100%;margin-top:8px}
+.panel h2{font-size:17px;margin:0 0 12px}
+.help{font-size:12px;line-height:1.6;color:#687588;margin:12px 2px}
+.run{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid #eef1f6;gap:12px}
+.run strong{font-size:13px}.run small{display:block;color:#8993a3;margin-top:5px}
+.run button{padding:9px 11px;font-size:11px}
+.hidden{display:none!important}.status{font-size:12px;color:#687588;line-height:1.5;margin:10px 2px}
+input{width:100%;padding:12px;border:1px solid #e1e6ef;border-radius:10px;margin:5px 0 8px;font-size:14px}
+@media(max-width:380px){.value{font-size:16px}.stat{padding:11px}.label{font-size:9px}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>발자국<span style="color:#2864ff">.</span></h1><div class="sub">YOUR RUN. YOUR TRACE.</div></div><span class="pill" id="badge">준비됨</span></header>
+<div id="map" aria-label="러닝 지도"></div>
+<div id="status" class="status">지도 준비 완료. 위치 권한을 허용하면 현재 위치를 표시할 수 있어.</div>
+<section class="stats">
+ <div class="stat"><div class="label">거리</div><div class="value"><span id="distance">0.00</span> <span class="unit">km</span></div></div>
+ <div class="stat"><div class="label">시간</div><div class="value" id="time">00:00:00</div></div>
+ <div class="stat"><div class="label">평균 페이스</div><div class="value"><span id="pace">--:--</span><span class="unit"> /km</span></div></div>
+</section>
+<div class="actions">
+ <button class="primary" id="start">러닝 시작</button>
+ <button id="center">현재 위치로 이동</button>
+ <button class="stop" id="finish" disabled>러닝 종료 및 저장</button>
+ <button id="clear">경로 지우기</button>
+</div>
+<div class="panel">
+ <h2>최근 러닝 기록</h2>
+ <div id="runs"><div class="help">아직 저장된 기록이 없어. 첫 러닝을 마치면 이 기기에 저장돼.</div></div>
+ <button id="export" class="full">기록 백업 파일 내보내기</button>
+ <button id="importBtn" class="full">백업 파일 가져오기</button>
+ <input id="importFile" type="file" accept="application/json,.json" class="hidden">
+</div>
+<p class="help">무료 지도 © OpenStreetMap contributors · 기록은 기본적으로 이 브라우저에 저장돼. iPhone/iPad Safari에서 위치 권한을 허용해야 GPS가 작동해. 화면 잠금 중에는 iOS가 웹앱의 위치 추적을 멈출 수 있어.</p>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const map=L.map('map').setView([36.6424,127.4890],14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
+let points=[],watchId=null,startedAt=null,elapsed=0,tick=null,line=null,startMarker=null,endMarker=null,currentMarker=null,runs=[];
+const STORE='footprint_web_runs_v1';
+function readRuns(){try{runs=JSON.parse(localStorage.getItem(STORE)||'[]')}catch{runs=[]}renderRuns()}
+function persist(){localStorage.setItem(STORE,JSON.stringify(runs))}
+function dist(a,b){const R=6371000,rad=x=>x*Math.PI/180,dLat=rad(b.lat-a.lat),dLon=rad(b.lng-a.lng),x=Math.sin(dLat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function totalKm(){let m=0;for(let i=1;i<points.length;i++)m+=dist(points[i-1],points[i]);return m/1000}
+function fmt(sec){sec=Math.max(0,Math.floor(sec));return [Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(x=>String(x).padStart(2,'0')).join(':')}
+function updateStats(){const km=totalKm(),sec=startedAt?elapsed+Math.floor((Date.now()-startedAt)/1000):elapsed;$('distance').textContent=km.toFixed(2);$('time').textContent=fmt(sec);$('pace').textContent=km>=.05?`${Math.floor(sec/km/60)}:${String(Math.round(sec/km)%60).padStart(2,'0')}`:'--:--'}
+function setStatus(t){$('status').textContent=t}
+function draw(){if(line)map.removeLayer(line);line=null;if(points.length){line=L.polyline(points,{color:'#2864ff',weight:5,opacity:.9}).addTo(map);if(!startMarker)startMarker=L.circleMarker(points[0],{radius:7,color:'#fff',weight:2,fillColor:'#21a366',fillOpacity:1}).addTo(map);else startMarker.setLatLng(points[0]);if(endMarker)map.removeLayer(endMarker);if(points.length>1)endMarker=L.circleMarker(points[points.length-1],{radius:7,color:'#fff',weight:2,fillColor:'#d94747',fillOpacity:1}).addTo(map)}}
+function renderRuns(){const root=$('runs');if(!runs.length){root.innerHTML='<div class="help">아직 저장된 기록이 없어. 첫 러닝을 마치면 이 기기에 저장돼.</div>';return}root.innerHTML='';runs.slice().reverse().forEach((r,idx)=>{const row=document.createElement('div');row.className='run';const info=document.createElement('div');const d=new Date(r.startedAt).toLocaleString();info.innerHTML=`<strong>${r.km.toFixed(2)} km · ${fmt(r.seconds)}</strong><small>${d} · 평균 ${r.pace}/km</small>`;const btn=document.createElement('button');btn.textContent='경로 보기';btn.onclick=()=>{points=r.points||[];draw();updateStats();if(points.length)map.fitBounds(L.latLngBounds(points),{padding:[24,24]});setStatus('저장된 경로를 표시 중이야.')};row.append(info,btn);root.append(row)})}
+function resetMarkers(){[line,startMarker,endMarker].forEach(x=>{if(x)map.removeLayer(x)});line=startMarker=endMarker=null}
+function addPosition(pos){const p={lat:pos.coords.latitude,lng:pos.coords.longitude,ts:pos.timestamp||Date.now(),accuracy:pos.coords.accuracy};if(points.length&&dist(points[points.length-1],p)<2)return;points.push(p);if(!currentMarker)currentMarker=L.circleMarker(p,{radius:6,color:'#fff',weight:2,fillColor:'#2864ff',fillOpacity:1}).addTo(map);else currentMarker.setLatLng(p);draw();map.panTo(p);updateStats();setStatus(`GPS 연결됨 · 정확도 약 ${Math.round(p.accuracy||0)}m · 위치 ${points.length}개 기록`)}
+$('start').onclick=()=>{if(!('geolocation'in navigator)){setStatus('이 브라우저는 GPS 위치 기능을 지원하지 않아.');return}if(!window.isSecureContext){setStatus('위치 권한은 HTTPS 사이트에서만 쓸 수 있어. Safari에서 안전한 HTTPS 주소로 열어야 해.');return}navigator.geolocation.getCurrentPosition(pos=>{points=[];resetMarkers();startedAt=Date.now();elapsed=0;addPosition(pos);watchId=navigator.geolocation.watchPosition(addPosition,e=>setStatus('GPS 오류: '+e.message),{enableHighAccuracy:true,maximumAge:1000,timeout:15000});$('start').disabled=true;$('finish').disabled=false;$('badge').textContent='기록 중';tick=setInterval(updateStats,1000);setStatus('러닝 기록 중. 화면이 켜져 있는 동안 브라우저가 위치를 추적해.')},e=>setStatus('위치 권한 오류: '+e.message+' · Safari 설정에서 위치 접근을 허용해.'),{enableHighAccuracy:true,timeout:15000,maximumAge:0})};
+$('finish').onclick=()=>{if(watchId!==null)navigator.geolocation.clearWatch(watchId);watchId=null;if(tick)clearInterval(tick);tick=null;elapsed+=startedAt?Math.floor((Date.now()-startedAt)/1000):0;const km=totalKm(),pace=km>=.05?`${Math.floor(elapsed/km/60)}:${String(Math.round(elapsed/km)%60).padStart(2,'0')}`:'--:--';if(points.length){runs.push({startedAt:new Date(startedAt).toISOString(),endedAt:new Date().toISOString(),seconds:elapsed,km,pace,points});try{persist()}catch(e){setStatus('저장 공간이 부족해 기록을 저장하지 못했어. 백업 파일을 내보내 확인해.')}renderRuns()}startedAt=null;$('start').disabled=false;$('finish').disabled=true;$('badge').textContent='저장 완료';updateStats();setStatus(`러닝 종료 · ${km.toFixed(2)}km · ${fmt(elapsed)}. 이 기기의 브라우저에 저장했어.`)};
+$('center').onclick=()=>{if(currentMarker)map.setView(currentMarker.getLatLng(),17);else if(navigator.geolocation)navigator.geolocation.getCurrentPosition(p=>{const ll=[p.coords.latitude,p.coords.longitude];map.setView(ll,17);if(!currentMarker)currentMarker=L.circleMarker(ll,{radius:7,color:'#fff',fillColor:'#2864ff',fillOpacity:1}).addTo(map);else currentMarker.setLatLng(ll);setStatus('현재 위치를 표시했어.')},e=>setStatus('현재 위치를 가져오지 못했어: '+e.message),{enableHighAccuracy:true,timeout:12000})};
+$('clear').onclick=()=>{if(watchId!==null){setStatus('기록 중에는 경로를 지울 수 없어. 먼저 러닝을 종료해.');return}points=[];resetMarkers();updateStats();setStatus('지도 경로를 지웠어. 저장된 기록은 유지돼.')};
+$('export').onclick=()=>{const blob=new Blob([JSON.stringify(runs,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='footprint-runs-backup.json';a.click();URL.revokeObjectURL(url)};
+$('importBtn').onclick=()=>$('importFile').click();
+$('importFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const data=JSON.parse(await f.text());if(!Array.isArray(data))throw Error('백업 형식이 올바르지 않아');runs=[...runs,...data];persist();renderRuns();setStatus('백업 기록을 가져왔어.')}catch(err){setStatus('가져오기 실패: '+err.message)}e.target.value=''};
+readRuns();updateStats();
+if('serviceWorker'in navigator && location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body></html>

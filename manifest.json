@@ -1,0 +1,10 @@
+{
+  "name": "발자국 러너",
+  "short_name": "발자국",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f4f6fa",
+  "theme_color": "#f4f6fa",
+  "description": "무료 지도와 GPS를 이용한 러닝 기록 웹앱",
+  "icons": []
+}
